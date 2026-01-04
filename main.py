@@ -3,10 +3,15 @@ import platform
 import sys
 import os
 
-from src.config import DEFAULT_MODE
+from src.config import (
+    DEFAULT_MODE,
+    GREEN_TIME,
+    YELLOW_TIME,
+    RED_TIME,
+    ARRIVAL_PROB,
+    TICK,
+)
 from src.ui.gui_tk import TrafficGUI
-from src.concurrency.threads_impl import ThreadsSimulation
-from src.concurrency.processes_impl import ProcessesSimulation
 
 def system_info() -> dict:
     return {
@@ -25,6 +30,11 @@ def main():
     args = parser.parse_args()
     
     info = system_info()
+    print(
+        f"[INFO] Entorno: Python {info['python_version']} | OS: {info['os']} | "
+        f"CPU cores: {info['cpu_count']} | Ejecutable: {info['executable']}"
+    )
+    print(f"[INFO] Modo por defecto configurado: {DEFAULT_MODE.upper()}")
 
     if args.mode is None:
         try:
@@ -72,13 +82,16 @@ def main():
             args.mode = "threads" if selection == "1" else "processes"
 
     print(f"\nIniciando simulación con modo: {args.mode.upper()}\n")
+    print(
+        f"[INFO] Configuración: modo={args.mode.upper()} | ciclos_objetivo={args.cycles}"
+    )
+    print(
+        f"[INFO] Parámetros: tick={TICK}s | tiempos G/A/R={GREEN_TIME}/{YELLOW_TIME}/{RED_TIME}s | "
+        f"prob_llegada={ARRIVAL_PROB}"
+    )
+    print("[INFO] Los resultados detallados se registrarán en consola durante la ejecución.")
 
-    if args.mode == "threads":
-        sim = ThreadsSimulation(cycles=args.cycles)
-    else:
-        sim = ProcessesSimulation(cycles=args.cycles)
-    
-    gui = TrafficGUI(simulation=sim, system_info=info)
+    gui = TrafficGUI(mode=args.mode, cycles=args.cycles, system_info=info)
     gui.run()
 
 

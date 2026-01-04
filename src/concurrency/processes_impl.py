@@ -69,6 +69,7 @@ def worker_controlador(shared_sem_dict: Any,
         
         shared_ctrl_state['cycle'] = ctrl.ciclo
         shared_ctrl_state['phase'] = ctrl.fase_idx
+        shared_ctrl_state['start_ts'] = time.time()
 
     while running_event.is_set() and ctrl.ciclo < cycles_target:
         
@@ -103,6 +104,15 @@ def worker_controlador(shared_sem_dict: Any,
             shared_ctrl_state['phase'] = ctrl.fase_idx
 
     # End of cycles
+    total_time = None
+    if shared_ctrl_state.get('start_ts'):
+        total_time = time.time() - shared_ctrl_state['start_ts']
+
+    with lock:
+        if total_time is not None:
+            shared_ctrl_state['total_time'] = total_time
+        shared_ctrl_state['ended'] = True
+
     running_event.clear()
 
 class ProcessesSimulation(BaseSimulation):
@@ -118,10 +128,13 @@ class ProcessesSimulation(BaseSimulation):
         # Shared Controller State (for GUI)
         self.shared_ctrl_state = self.manager.dict({
             "cycle": 0,
-            "phase": 0
+            "phase": 0,
+            "start_ts": None,
+            "total_time": None,
+            "ended": False,
         })
         
-        self.lock = self.manager.RLock() # RLock is safer
+        self.lock = self.manager.RLock()  # RLock is safer
         self.running_event = self.manager.Event()
         self.running_event.set()
         
@@ -129,16 +142,29 @@ class ProcessesSimulation(BaseSimulation):
         self.barrier = self.manager.Barrier(5)
         
         self.processes = []
+        self._last_logged_cycle = -1
+        self._last_logged_phase = -1
+        self._total_time_logged = False
 
     def start(self) -> None:
         self.running_event.set()
+        self._total_time_logged = False
+        self._last_logged_cycle = -1
+        self._last_logged_phase = -1
+        self.processes = []
+        with self.lock:
+            self.shared_ctrl_state['cycle'] = 0
+            self.shared_ctrl_state['phase'] = 0
+            self.shared_ctrl_state['start_ts'] = None
+            self.shared_ctrl_state['total_time'] = None
+            self.shared_ctrl_state['ended'] = False
         
         # Start Semaphore Processes
         dirs = ["N", "S", "E", "O"]
         for i, d in enumerate(dirs):
             p = multiprocessing.Process(
                 target=worker_semaforo,
-                args=(d, self.shared_sem_dict, self.lock, self.running_event, self.barrier, i+1),
+                args=(d, self.shared_sem_dict, self.lock, self.running_event, self.barrier, i + 1),
                 name=f"Semaforo-{d}"
             )
             self.processes.append(p)
@@ -167,7 +193,7 @@ class ProcessesSimulation(BaseSimulation):
                 # We interpret the data
                 semas_data = {}
                 for d in ["N", "S", "E", "O"]:
-                    s = self.shared_sem_dict[d] # copy
+                    s = self.shared_sem_dict[d]  # copy
                     semas_data[d] = {
                         "estado": s.estado,
                         "cola": len(s.cola),
@@ -175,14 +201,44 @@ class ProcessesSimulation(BaseSimulation):
                         "espera_prom": round(s.espera_promedio(), 2),
                     }
                 
-                return {
+                snap = {
                     "cycle": self.shared_ctrl_state["cycle"],
                     "phase": self.shared_ctrl_state["phase"],
+                    "total_time": round(self.shared_ctrl_state["total_time"], 2) if self.shared_ctrl_state["total_time"] is not None else None,
                     "semaforos": semas_data
                 }
+                if (
+                    snap["cycle"] != self._last_logged_cycle
+                    or snap["phase"] != self._last_logged_phase
+                ):
+                    self._log_snapshot(snap)
+                    self._last_logged_cycle = snap["cycle"]
+                    self._last_logged_phase = snap["phase"]
+                if (
+                    snap["total_time"] is not None
+                    and not self._total_time_logged
+                ):
+                    print(f"[PROCESSES] tiempo_total_processes_s = {snap['total_time']:.2f}")
+                    self._total_time_logged = True
+                return snap
         except Exception:
             # If manager is closed or error
             return {
-                "cycle": 0, "phase": 0, 
+                "cycle": 0,
+                "phase": 0,
                 "semaforos": {d: {"estado": "OFF", "cola": 0, "cruzaron": 0, "espera_prom": 0} for d in "NSEO"}
             }
+
+    def _log_snapshot(self, snap: Dict[str, Any]) -> None:
+        total_cruzaron = sum(s["cruzaron"] for s in snap["semaforos"].values())
+        print(
+            f"[PROCESSES] Ciclo {snap['cycle']} | Fase {snap['phase']} | "
+            f"Total vehículos que cruzaron: {total_cruzaron}"
+        )
+        for d in ["N", "S", "E", "O"]:
+            datos = snap["semaforos"][d]
+            print(
+                "    "
+                f"{d}: estado={datos['estado']} | cola={datos['cola']} | "
+                f"cruzaron={datos['cruzaron']} | espera_prom={datos['espera_prom']}s"
+            )

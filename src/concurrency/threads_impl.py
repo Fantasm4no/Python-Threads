@@ -22,9 +22,15 @@ class ThreadsSimulation(BaseSimulation):
         self._veh_id = 0
 
         self._phase_thread: threading.Thread | None = None
+        self._last_logged_cycle = -1
+        self._last_logged_phase = -1
+        self._start_ts: float | None = None
+        self._total_time: float | None = None
 
     def start(self) -> None:
         self._running = True
+        self._start_ts = None
+        self._total_time = None
 
         # Un hilo por semáforo
         for d in ["N", "S", "E", "O"]:
@@ -43,6 +49,8 @@ class ThreadsSimulation(BaseSimulation):
         # fase inicial
         with self._lock:
             self.controlador.aplicar_fase(self.semaforos)
+            if self._start_ts is None:
+                self._start_ts = time.time()
 
         while self._running and self.controlador.ciclo < self.cycles_target:
             # Verde
@@ -66,6 +74,9 @@ class ThreadsSimulation(BaseSimulation):
                 self.controlador.aplicar_fase(self.semaforos)
 
         self._running = False
+        if self._start_ts is not None and self._total_time is None:
+            self._total_time = time.time() - self._start_ts
+            print(f"[THREADS] tiempo_total_threads_s = {self._total_time:.2f}")
 
     def _run_semaforo(self, direccion: str) -> None:
         while self._running:
@@ -86,6 +97,7 @@ class ThreadsSimulation(BaseSimulation):
             snap = {
                 "cycle": self.controlador.ciclo,
                 "phase": self.controlador.fase_idx,
+                "total_time": round(self._total_time, 2) if self._total_time is not None else None,
                 "semaforos": {
                     d: {
                         "estado": s.estado,
@@ -95,6 +107,26 @@ class ThreadsSimulation(BaseSimulation):
                     } for d, s in self.semaforos.items()
                 }
             }
+            if (
+                snap["cycle"] != self._last_logged_cycle
+                or snap["phase"] != self._last_logged_phase
+            ):
+                self._log_snapshot(snap)
+                self._last_logged_cycle = snap["cycle"]
+                self._last_logged_phase = snap["phase"]
             return snap
 
+    def _log_snapshot(self, snap: Dict[str, Any]) -> None:
+        total_cruzaron = sum(s["cruzaron"] for s in snap["semaforos"].values())
+        print(
+            f"[THREADS] Ciclo {snap['cycle']} | Fase {snap['phase']} | "
+            f"Total vehículos que cruzaron: {total_cruzaron}"
+        )
+        for d in ["N", "S", "E", "O"]:
+            datos = snap["semaforos"][d]
+            print(
+                "    "
+                f"{d}: estado={datos['estado']} | cola={datos['cola']} | "
+                f"cruzaron={datos['cruzaron']} | espera_prom={datos['espera_prom']}s"
+            )
     
