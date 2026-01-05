@@ -131,6 +131,9 @@ class TrafficGUI:
             return ProcessesSimulation(cycles=self.cycles_target)
         return ThreadsSimulation(cycles=self.cycles_target)
 
+    def _mode_uses_gil(self, mode: str) -> bool:
+        return (mode or "threads").lower() == "threads"
+
     def _start_new_simulation(self, mode: str) -> None:
         self.mode = (mode or "threads").lower()
 
@@ -145,7 +148,13 @@ class TrafficGUI:
 
         self.sim = self._create_simulation(self.mode)
         self.sim.start()
-        self.lbl_mode.config(text=f"Modo: {self.mode.upper()} | Ciclos objetivo: {self.cycles_target}")
+        uses_gil = "Habilitado" if self._mode_uses_gil(self.mode) else "Deshabilitado"
+        self.lbl_mode.config(
+            text=f"Modo: {self.mode.upper()} | Ciclos objetivo: {self.cycles_target} | GIL: {uses_gil}"
+        )
+        print(
+            f"[INFO] GUI -> nuevo modo: {self.mode.upper()} | GIL: {uses_gil} | ciclos_objetivo: {self.cycles_target}"
+        )
 
     def _clear_dynamic_state(self) -> None:
         # Limpiar colas y animaciones
